@@ -1,0 +1,176 @@
+name: Deploy ECS to Develop
+
+on:
+  push:
+    paths:
+      - 'ecs/**'
+      - 'web/**'
+    branches:
+      - develop
+
+env:
+  APP_ENV: dev
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ap-northeast-1
+  ECR_PHP_REPOSITORY: y-oka-ecs/dev/php-fpm
+  ECR_NGINX_REPOSITORY: y-oka-ecs/dev/nginx
+  ECS_TASK_DEFINITION: ecs/dev/task_definition/y-oka-ecs.json
+  ECS_CLUSTER: y-oka-ecs-dev
+  ECS_SERVICE: y-oka-ecs-dev
+
+jobs:
+
+  #
+  # Build PHP
+  #
+
+  build-php:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+
+      #
+      # Setup Application
+      #
+
+      - name: Checkout Project
+        uses: actions/checkout@v2
+
+      #
+      # Build Image & Push to ECR
+      #
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1 # https://github.com/aws-actions/configure-aws-credentials
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1 # https://github.com/aws-actions/amazon-ecr-login
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/${{ env.ECR_PHP_REPOSITORY }}:$IMAGE_TAG -f ecs/dev/container/php-fpm/Dockerfile .
+          docker push $ECR_REGISTRY/${{ env.ECR_PHP_REPOSITORY }}:$IMAGE_TAG
+
+          # artifact for render task definition
+          echo $ECR_REGISTRY/${{ env.ECR_PHP_REPOSITORY }}:$IMAGE_TAG > php_image_path.txt
+
+      - uses: actions/upload-artifact@v1
+        with:
+          name: artifact_php
+          path: php_image_path.txt
+
+      - name: Logout of Amazon ECR
+        if: always()
+        run: docker logout ${{ steps.login-ecr.outputs.registry }}
+
+
+  #
+  # Build Nginx
+  #
+
+  build-nginx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v2
+
+      #
+      # Build Image & Push to ECR
+      #
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1 # https://github.com/aws-actions/configure-aws-credentials
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1 # https://github.com/aws-actions/amazon-ecr-login
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/${{ env.ECR_NGINX_REPOSITORY }}:$IMAGE_TAG -f ecs/dev/container/nginx/Dockerfile .
+          docker push $ECR_REGISTRY/${{ env.ECR_NGINX_REPOSITORY }}:$IMAGE_TAG
+
+          # artifact for render task definition
+          echo $ECR_REGISTRY/${{ env.ECR_NGINX_REPOSITORY }}:$IMAGE_TAG > nginx_image_path.txt
+
+      - uses: actions/upload-artifact@v1
+        with:
+          name: artifact_nginx
+          path: nginx_image_path.txt
+
+      - name: Logout of Amazon ECR
+        if: always()
+        run: docker logout ${{ steps.login-ecr.outputs.registry }}
+
+
+  #
+  # Deploy to ECS
+  #
+
+  deploy-ecs:
+    needs: [build-php, build-nginx]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v2
+
+      # download artifacts
+      - uses: actions/download-artifact@v1
+        with:
+          name: artifact_php
+      - uses: actions/download-artifact@v1
+        with:
+          name: artifact_nginx
+      - name: Set Output from Artifacts
+        id: artifact-image
+        run: |
+          echo "php-image=`cat artifact_php/php_image_path.txt`" >> "$GITHUB_OUTPUT"
+          echo "nginx-image=`cat artifact_nginx/nginx_image_path.txt`" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1 # https://github.com/aws-actions/configure-aws-credentials
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render TaskDefinition for php-image
+        id: render-php-container
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.ECS_TASK_DEFINITION }}
+          container-name: php-fpm
+          image: ${{ steps.artifact-image.outputs.php-image }}
+
+      - name: Render TaskDefinition for nginx-image
+        id: render-nginx-container
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-php-container.outputs.task-definition }}
+          container-name: nginx
+          image: ${{ steps.artifact-image.outputs.nginx-image }}
+
+      - name: Deploy to ECS TaskDefinition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-nginx-container.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}

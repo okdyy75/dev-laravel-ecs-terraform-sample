@@ -1,0 +1,56 @@
+name: Terraform Plan to Develop
+
+on: workflow_dispatch
+
+env:
+  APP_ENV: dev
+  TF_VERSION: 1.4.6
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ap-northeast-1
+  APP_KEY: ${{ secrets.DEV_APP_KEY }}
+  DB_USERNAME: ${{ secrets.DEV_DB_USERNAME }}
+  DB_PASSWORD: ${{ secrets.DEV_DB_PASSWORD }}
+
+jobs:
+
+  #
+  # Terraform Plan
+  #
+
+  terrafom-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+
+      - name: Checkout Project
+        uses: actions/checkout@v2
+
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1 # https://github.com/aws-actions/configure-aws-credentials
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform setup
+        run: |
+          cp terraform/example.tfvars terraform/environments/dev/dev.tfvars
+          cd terraform/environments/dev
+          sed -ie 's|app_key=".*"|app_key="${{ env.APP_KEY }}"|' dev.tfvars
+          sed -ie 's|db_username=".*"|db_username="${{ env.DB_USERNAME }}"|' dev.tfvars
+          sed -ie 's|db_password=".*"|db_password="${{ env.DB_PASSWORD }}"|' dev.tfvars
+
+      - name: Terraform init
+        working-directory: terraform/environments/dev
+        run: |
+          terraform init
+
+      - name: Terraform plan
+        working-directory: terraform/environments/dev
+        run: |
+          terraform plan -var-file=dev.tfvars -no-color

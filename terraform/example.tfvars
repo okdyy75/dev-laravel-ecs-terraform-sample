@@ -1,0 +1,7 @@
+env="dev"
+app_name="y-oka-ecs"
+app_domain="dev-laravel-ecs.okdyy75.com"
+app_key="xxxxx"
+db_name="db"
+db_username="xxxxx"
+db_password="xxxxx"

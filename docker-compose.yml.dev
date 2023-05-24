@@ -1,0 +1,31 @@
+version: "3"
+services:
+  # Nginx ################################################
+  nginx:
+    build:
+      dockerfile: ecs/dev/container/nginx/Dockerfile
+      context: .
+      args:
+        PHP_FPM_UPSTREAM: php-fpm:9000
+    environment:
+      TZ: Asia/Tokyo
+    expose:
+      - "80"
+    depends_on:
+      - php-fpm
+    volumes:
+      - "./web:/var/www/web"
+      - "./.log/nginx:/var/log/nginx"
+    ports:
+      - "80:80"
+  # php-fpm ################################################
+  php-fpm:
+    build:
+      dockerfile: ecs/dev/container/php-fpm/Dockerfile
+      context: .
+    environment:
+      APP_ENV: development
+      APP_KEY: base64:PkgTWf/AZG4SipvQmwIBTGYRf597z32F6sFEiJhPHDo=
+      DB_CONNECTION: sqlite
+    expose:
+      - "9000"

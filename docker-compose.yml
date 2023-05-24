@@ -1,0 +1,47 @@
+version: "3"
+services:
+  # Nginx ################################################
+  nginx:
+    build:
+      dockerfile: ./Dockerfile
+      context: ./docker/nginx
+      args:
+        PHP_FPM_UPSTREAM: php-fpm:9000
+    environment:
+      TZ: Asia/Tokyo
+    expose:
+      - "80"
+    depends_on:
+      - php-fpm
+    volumes:
+      - "./web:/var/www/web"
+      - "./.log/nginx:/var/log/nginx"
+    ports:
+      - "80:80"
+  # php-fpm ################################################
+  php-fpm:
+    build:
+      dockerfile: ./Dockerfile
+      context: ./docker/php-fpm
+    expose:
+      - "9000"
+    depends_on:
+      - mysql
+    volumes:
+      - "./web:/var/www/web"
+  # MySQL ################################################
+  mysql:
+    build:
+      dockerfile: ./Dockerfile
+      context: ./docker/mysql
+    environment:
+      MYSQL_DATABASE: db
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Asia/Tokyo
+    expose:
+      - "3306"
+    volumes:
+      - "./.data/mysql:/var/lib/mysql"
+      - "./.log/mysql:/var/log/mysql"
+    ports:
+      - "3306:3306"

@@ -1,0 +1,67 @@
+name: ECS Execute Command to Develop
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'execute command(ex: "php","/var/www/web/laravel/artisan","xxxx")'
+        required: true
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ap-northeast-1
+  ECS_CLUSTER: y-oka-ecs-dev
+  ECS_SERVICE: y-oka-ecs-dev
+  ECS_TASK_FAMILY: y-oka-ecs-dev
+
+jobs:
+
+  #
+  # ECS Execute Command
+  #
+
+  ecs-execute-cmd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1 # https://github.com/aws-actions/configure-aws-credentials
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECS Run Task for Exec Command
+        id: run-task-for-exec-command
+        run: |
+          network_config=$(
+            aws ecs describe-services \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services ${{ env.ECS_SERVICE }} | jq '.services[0].networkConfiguration'
+          )
+          task_arn=$(
+            aws ecs run-task \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --launch-type "FARGATE" \
+              --network-configuration "${network_config}"  \
+              --overrides '{
+                "containerOverrides": [
+                  {
+                    "name": "php-fpm",
+                    "command": [${{ github.event.inputs.command }}]
+                  }
+                ]
+              }' \
+              --task-definition ${{ env.ECS_TASK_FAMILY }} | jq -r '.tasks[0].taskArn'
+          )
+          task_id=$(echo $task_arn | cut -d "/" -f 3)
+          task_url="https://${{ env.AWS_REGION }}.console.aws.amazon.com/ecs/v2/clusters/${{ env.ECS_CLUSTER }}/tasks/${task_id}/configuration"
+          echo "task_url=${task_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Open Run Task URL
+        run: echo ${{ steps.run-task-for-exec-command.outputs.task_url }}
+
+      - name: Logout of Amazon ECR
+        if: always()
+        run: docker logout ${{ steps.login-ecr.outputs.registry }}
